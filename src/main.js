@@ -48,7 +48,7 @@ if (themeBtn) {
 
   themeBtn.addEventListener('click', () => {
     document.documentElement.classList.add('theme-transition');
-    
+
     let currentTheme = document.documentElement.getAttribute('data-theme');
     if (currentTheme === 'dark') {
       document.documentElement.setAttribute('data-theme', 'light');
@@ -58,7 +58,7 @@ if (themeBtn) {
       localStorage.setItem('theme', 'dark');
     }
     updateIcon();
-    
+
     setTimeout(() => {
       document.documentElement.classList.remove('theme-transition');
     }, 400);
@@ -114,7 +114,7 @@ if (!reduceMotion && !isTouch) {
 }
 
 /* ─────────────────────── route show ───────────────────────────────── */
-function show() {
+function show(opts) {
   const h = (location.hash || '#/').slice(1) || '/';
   const el = pages.find(p => p.dataset.route === h) || pages[0];
   const r = el.dataset.route;
@@ -156,23 +156,66 @@ function show() {
     if (heading) { heading.setAttribute('tabindex', '-1'); heading.focus({ preventScroll: true }); }
   });
 
-  // Fire ScrollTrigger reveals for the new section
-  requestAnimationFrame(() => { setupPageAnimations(el); });
+  // Fire ScrollTrigger reveals for the new section.
+  // During a curtain transition (opts.defer) the caller starts them just before the
+  // curtain lifts, so they play on screen instead of behind the black panel.
+  if (!(opts && opts.defer)) {
+    requestAnimationFrame(() => { setupPageAnimations(el); });
+  }
+  return el;
 }
 
 /* ─────────────────────── drawer toggle ─────────────────────────────── */
+function openDrawer() {
+  dr.hidden = false;
+  mb.setAttribute('aria-expanded', 'true');
+  if (reduceMotion) return;
+
+  const items = dr.querySelectorAll('a');
+  gsap.fromTo(dr,
+    { autoAlpha: 0, y: -18, scale: 0.97, transformOrigin: 'top right' },
+    { autoAlpha: 1, y: 0, scale: 1, duration: 0.38, ease: 'power3.out', overwrite: true }
+  );
+  gsap.fromTo(items,
+    { autoAlpha: 0, x: 16 },
+    { autoAlpha: 1, x: 0, duration: 0.28, stagger: 0.045, delay: 0.06, ease: 'power2.out', overwrite: true }
+  );
+}
+
+function closeDrawer() {
+  if (dr.hidden) return;
+  mb.setAttribute('aria-expanded', 'false');
+  if (reduceMotion) {
+    dr.hidden = true;
+    return;
+  }
+  gsap.to(dr, {
+    autoAlpha: 0,
+    y: -10,
+    duration: 0.18,
+    ease: 'power2.in',
+    overwrite: true,
+    onComplete() {
+      dr.hidden = true;
+      gsap.set(dr, { clearProps: 'all' });
+    }
+  });
+}
+
 mb.addEventListener('click', e => {
   e.stopPropagation();
-  const open = dr.hidden;
-  dr.hidden = !open;
-  mb.setAttribute('aria-expanded', String(open));
-  if (open) trapFocus(dr);
+  if (dr.hidden) {
+    openDrawer();
+    trapFocus(dr);
+  } else {
+    closeDrawer();
+  }
 });
 document.addEventListener('click', e => {
-  if (!dr.hidden && !dr.contains(e.target)) { dr.hidden = true; mb.setAttribute('aria-expanded', 'false'); }
+  if (!dr.hidden && !dr.contains(e.target)) closeDrawer();
 });
 document.addEventListener('keydown', e => {
-  if (e.key === 'Escape') { dr.hidden = true; mb.setAttribute('aria-expanded', 'false'); mb.focus(); }
+  if (e.key === 'Escape') { closeDrawer(); mb.focus(); }
 });
 
 /* ─────────────────────── focus trap ───────────────────────────────── */
@@ -197,6 +240,8 @@ curtain.innerHTML = '<span></span>';
 document.body.appendChild(curtain);
 
 let busy = false, queued = null;
+const mainEl = document.querySelector('main');
+let pendingEl = null;
 
 function doTransition() {
   if (reduceMotion) { show(); return; }
@@ -214,10 +259,20 @@ function doTransition() {
     }
   });
 
+  const curtainTitle = curtain.firstChild;
   tl.set(curtain, { yPercent: 100, visibility: 'visible' })
-    .to(curtain, { yPercent: 0, duration: 0.55, ease: EZ })
-    .call(() => { show(); })
-    .to(curtain, { yPercent: -100, duration: 0.65, ease: EZ, delay: 0.15 })
+    .set(curtainTitle, { y: 32, scale: 0.82, opacity: 0 })
+    .to(curtain, { yPercent: 0, duration: 0.7, ease: EZ })
+    .to(curtainTitle, { y: 0, scale: 1, opacity: 1, duration: 0.42, ease: 'back.out(1.7)' }, '-=0.22')
+    .call(() => { mainEl.classList.add('anim-wait'); pendingEl = show({ defer: true }); })
+    .to(curtainTitle, { y: -24, opacity: 0, duration: 0.2, ease: 'power2.in' }, '+=0.12')
+    .to(curtain, { yPercent: -100, duration: 0.78, ease: EZ }, '-=0.06')
+    // Release the page animations at the moment the curtain starts to lift ('<' = same start time)
+    .call(() => {
+      mainEl.classList.remove('anim-wait');
+      const el = pendingEl; pendingEl = null;
+      requestAnimationFrame(() => { if (el) setupPageAnimations(el); });
+    }, null, '<')
     .set(curtain, { visibility: 'hidden' });
 }
 
@@ -231,12 +286,13 @@ document.querySelector('.logo').addEventListener('mouseenter', () => { replay(na
 /* ───────────── show() override: init 3D on /skills ───────────────── */
 // Wrap show() here (before any initial call) so ALL visits — first and return — get 3D init
 const originalShow = show;
-show = function () {
-  originalShow();
+show = function (opts) {
+  const el = originalShow(opts);
   const h = (location.hash || '#/').slice(1) || '/';
   if (h.startsWith('/skills')) {
     setTimeout(init3DScene, 100); // slight delay to ensure layout is done
   }
+  return el;
 };
 
 /* ───────────────────── intro sequence (GSAP) ──────────────────────── */
@@ -303,7 +359,7 @@ if (reduceMotion || seen) {
 (function initHeroMarquee() {
   if (reduceMotion) return;
   const tracks = document.querySelectorAll('.hero .track, .hero .track-sub');
-  
+
   tracks.forEach(track => {
     // Duplicate spans for seamless loop
     const spans = track.querySelectorAll('span');
@@ -424,26 +480,37 @@ function setupPageAnimations(section) {
 
   const route = section.dataset.route;
 
-  // Title animation
+  // Headings rise into view behind a clean clipping edge, like the reference.
   section.querySelectorAll('.pt').forEach(title => {
-    gsap.set(title, { opacity: 0, y: 46 });
+    let line = title.querySelector('.pt-line');
+    if (!line) {
+      const label = title.textContent.trim();
+      const mask = document.createElement('span');
+      line = document.createElement('span');
+      mask.className = 'pt-mask';
+      line.className = 'pt-line';
+      line.textContent = label;
+      mask.appendChild(line);
+      title.replaceChildren(mask);
+    }
+    gsap.set(line, { opacity: 0, yPercent: 135, scale: 0.9, transformOrigin: '50% 100%' });
     const st = ScrollTrigger.create({
       trigger: title,
       start: 'top 85%',
       once: true,
       onEnter() {
-        gsap.to(title, { opacity: 1, y: 0, duration: 1, ease: 'power3.out' });
+        gsap.to(line, { opacity: 1, yPercent: 0, scale: 1, duration: 1.15, ease: 'back.out(1.15)' });
       }
     });
     currentTriggers.push(st);
     // If already visible (above fold), fire immediately
     if (title.getBoundingClientRect().top < window.innerHeight * 0.85) {
-      gsap.to(title, { opacity: 1, y: 0, duration: 1, ease: 'power3.out', delay: 0.3 });
+      gsap.to(line, { opacity: 1, yPercent: 0, scale: 1, duration: 1.15, ease: 'back.out(1.15)', delay: 0.3 });
     }
   });
 
-  // Cards, rows, shots, details — stagger reveal
-  const revealItems = section.querySelectorAll('.card, .row, .shots figure, details, .flow span, .chip');
+  // Cards, details and skill chips — soft stagger reveal
+  const revealItems = section.querySelectorAll('.card, details, .flow span, .chip');
   if (revealItems.length) {
     gsap.set(revealItems, { opacity: 0, y: 24 });
 
@@ -471,6 +538,81 @@ function setupPageAnimations(section) {
       }
     });
   }
+
+  // Project screenshots rise into view behind a hard edge, with captions following.
+  section.querySelectorAll('.shots figure').forEach(figure => {
+    let mask = figure.querySelector('.shot-mask');
+    let image = mask && mask.querySelector('img');
+    if (!mask) {
+      image = figure.querySelector(':scope > img');
+      if (image) {
+        mask = document.createElement('span');
+        mask.className = 'shot-mask';
+        image.parentNode.insertBefore(mask, image);
+        mask.appendChild(image);
+      }
+    }
+    if (!image) return;
+
+    const caption = figure.querySelector('figcaption');
+    gsap.set(image, { opacity: 0, yPercent: 125, scale: 1.18, transformOrigin: '50% 100%' });
+    if (caption) gsap.set(caption, { opacity: 0, y: 12 });
+    const revealShot = () => {
+      const tl = gsap.timeline({ defaults: { ease: 'power4.out' } });
+      tl.to(image, { opacity: 1, yPercent: 0, scale: 1, duration: 1.15, ease: 'power4.out' });
+      if (caption) tl.to(caption, { opacity: 1, y: 0, duration: 0.65 }, '-=0.45');
+    };
+    const st = ScrollTrigger.create({
+      trigger: figure,
+      start: 'top 90%',
+      once: true,
+      onEnter: revealShot
+    });
+    currentTriggers.push(st);
+    if (figure.getBoundingClientRect().top < window.innerHeight * 0.9) {
+      gsap.delayedCall(0.35, revealShot);
+    }
+  });
+
+  // Project rows use the reference's clipped, bottom-up title reveal.
+  section.querySelectorAll('.row').forEach((row, i) => {
+    const title = row.querySelector('h3');
+    if (!title) return;
+
+    let titleLine = title.querySelector('.row-title-line');
+    if (!titleLine) {
+      const label = title.textContent.trim();
+      const mask = document.createElement('span');
+      titleLine = document.createElement('span');
+      mask.className = 'row-title-mask';
+      titleLine.className = 'row-title-line';
+      titleLine.textContent = label;
+      mask.appendChild(titleLine);
+      title.replaceChildren(mask);
+    }
+
+    const supporting = row.querySelector(':scope > div');
+    gsap.set(titleLine, { yPercent: 135, opacity: 0, scale: 0.9, transformOrigin: '50% 100%' });
+    if (supporting) gsap.set(supporting, { y: 28, opacity: 0 });
+
+    const revealRow = () => {
+      const tl = gsap.timeline({ defaults: { ease: 'power3.out' } });
+      tl.to(titleLine, { yPercent: 0, opacity: 1, scale: 1, duration: 1.05, ease: 'back.out(1.2)' });
+      if (supporting) tl.to(supporting, { y: 0, opacity: 1, duration: 0.75 }, '-=0.42');
+    };
+
+    const st = ScrollTrigger.create({
+      trigger: row,
+      start: 'top 88%',
+      once: true,
+      onEnter: revealRow
+    });
+    currentTriggers.push(st);
+
+    if (row.getBoundingClientRect().top < window.innerHeight * 0.88) {
+      gsap.delayedCall(0.25 + i * 0.16, revealRow);
+    }
+  });
 
   // Tables
   section.querySelectorAll('table').forEach(table => {
@@ -528,12 +670,23 @@ function setupPageAnimations(section) {
 
   // Case headings
   section.querySelectorAll('.case h3').forEach(h => {
-    gsap.set(h, { opacity: 0, y: 20 });
+    let line = h.querySelector('.case-title-line');
+    if (!line) {
+      const label = h.textContent.trim();
+      const mask = document.createElement('span');
+      line = document.createElement('span');
+      mask.className = 'case-title-mask';
+      line.className = 'case-title-line';
+      line.textContent = label;
+      mask.appendChild(line);
+      h.replaceChildren(mask);
+    }
+    gsap.set(line, { opacity: 0, yPercent: 130, scale: 0.92, transformOrigin: '50% 100%' });
     const st = ScrollTrigger.create({
       trigger: h,
       start: 'top 90%',
       once: true,
-      onEnter() { gsap.to(h, { opacity: 1, y: 0, duration: 0.7, ease: 'power3.out' }); }
+      onEnter() { gsap.to(line, { opacity: 1, yPercent: 0, scale: 1, duration: 1, ease: 'back.out(1.15)' }); }
     });
     currentTriggers.push(st);
   });
@@ -573,7 +726,14 @@ function setupPageAnimations(section) {
   // Footer giant name: gray → full color on scrub
   const footerBig = section.querySelector('.big');
   if (footerBig) {
-    gsap.set(footerBig, { color: '#555' });
+    gsap.set(footerBig, { color: '#555', opacity: 0, y: 30 });
+    const reveal = ScrollTrigger.create({
+      trigger: footerBig,
+      start: 'top 90%',
+      once: true,
+      onEnter() { gsap.to(footerBig, { opacity: 1, y: 0, duration: 0.9, ease: 'power4.out' }); }
+    });
+    currentTriggers.push(reveal);
     const st = ScrollTrigger.create({
       trigger: footerBig,
       start: 'top 95%',
@@ -590,6 +750,37 @@ function setupPageAnimations(section) {
           footerBig.style.color = `rgb(${c}, ${c}, ${c})`;
         }
       }
+    });
+    currentTriggers.push(st);
+  }
+
+  // The shared closing message enters as the final beat of the page.
+  const footerCta = document.querySelector('.foot .cta');
+  const footerMeta = document.querySelector('.foot .meta');
+  const footerParts = footerCta
+    ? [footerCta.querySelector('h3'), footerCta.querySelector('.btn')].filter(Boolean)
+    : [];
+  if (footerParts.length) {
+    gsap.set(footerParts, { opacity: 0, y: 20 });
+    const st = ScrollTrigger.create({
+      trigger: footerCta,
+      start: 'top 92%',
+      once: true,
+      onEnter() { gsap.to(footerParts, { opacity: 1, y: 0, duration: 0.75, ease: 'power3.out', stagger: 0.12 }); }
+    });
+    currentTriggers.push(st);
+    if (footerCta.getBoundingClientRect().top < window.innerHeight * 0.92) {
+      gsap.to(footerParts, { opacity: 1, y: 0, duration: 0.75, ease: 'power3.out', stagger: 0.12, delay: 0.35 });
+    }
+  }
+  if (footerMeta) {
+    const metaItems = footerMeta.children;
+    gsap.set(metaItems, { opacity: 0, y: 12 });
+    const st = ScrollTrigger.create({
+      trigger: footerMeta,
+      start: 'top 96%',
+      once: true,
+      onEnter() { gsap.to(metaItems, { opacity: 1, y: 0, duration: 0.6, ease: 'power3.out', stagger: 0.1 }); }
     });
     currentTriggers.push(st);
   }
